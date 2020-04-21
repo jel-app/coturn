@@ -96,7 +96,7 @@ static int pgsql_get_auth_secrets(secrets_list_t *sl, uint8_t *realm) {
 	PGconn * pqc = get_pqdb_connection();
 	if(pqc) {
 		char statement[TURN_LONG_STRING_SIZE];
-		snprintf(statement,sizeof(statement)-1,"select value from turn_secret where realm='%s'",realm);
+		snprintf(statement,sizeof(statement)-1,"select value from %sturn_secret where realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 		PGresult *res = PQexec(pqc, statement);
 
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -125,7 +125,7 @@ static int pgsql_get_user_key(uint8_t *usname, uint8_t *realm, hmackey_t key) {
 	if(pqc) {
 		char statement[TURN_LONG_STRING_SIZE];
 		/* direct user input eliminated - there is no SQL injection problem (since version 4.4.5.3) */
-		snprintf(statement,sizeof(statement),"select hmackey from turnusers_lt where name='%s' and realm='%s'",usname,realm);
+		snprintf(statement,sizeof(statement),"select hmackey from %sturnusers_lt where name='%s' and realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,usname,realm);
 		PGresult *res = PQexec(pqc, statement);
 
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK) || (PQntuples(res)!=1)) {
@@ -160,7 +160,7 @@ static int pgsql_get_oauth_key(const uint8_t *kid, oauth_key_data_raw *key) {
 
 	char statement[TURN_LONG_STRING_SIZE];
 	/* direct user input eliminated - there is no SQL injection problem (since version 4.4.5.3) */
-	snprintf(statement,sizeof(statement),"select ikm_key,timestamp,lifetime,as_rs_alg,realm from oauth_key where kid='%s'",(const char*)kid);
+	snprintf(statement,sizeof(statement),"select ikm_key,timestamp,lifetime,as_rs_alg,realm from %soauth_key where kid='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,(const char*)kid);
 
 	PGconn * pqc = get_pqdb_connection();
 	if(pqc) {
@@ -194,7 +194,7 @@ static int pgsql_list_oauth_keys(secrets_list_t *kids,secrets_list_t *teas,secre
 	int ret = -1;
 
 	char statement[TURN_LONG_STRING_SIZE];
-	snprintf(statement,sizeof(statement),"select ikm_key,timestamp,lifetime,as_rs_alg,realm,kid from oauth_key order by kid");
+	snprintf(statement,sizeof(statement),"select ikm_key,timestamp,lifetime,as_rs_alg,realm,kid from %soauth_key order by kid",turn_params.default_users_db.persistent_users_db.table_prefix);
 
 	PGconn * pqc = get_pqdb_connection();
 	if(pqc) {
@@ -250,14 +250,14 @@ static int pgsql_set_user_key(uint8_t *usname, uint8_t *realm, const char *key) 
 	char statement[TURN_LONG_STRING_SIZE];
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-	  snprintf(statement,sizeof(statement),"insert into turnusers_lt (realm,name,hmackey) values('%s','%s','%s')",realm,usname,key);
+	  snprintf(statement,sizeof(statement),"insert into %sturnusers_lt (realm,name,hmackey) values('%s','%s','%s')",turn_params.default_users_db.persistent_users_db.table_prefix,realm,usname,key);
 
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 			if(res) {
 				PQclear(res);
 			}
-			snprintf(statement,sizeof(statement),"update turnusers_lt set hmackey='%s' where name='%s' and realm='%s'",key,usname,realm);
+			snprintf(statement,sizeof(statement),"update %sturnusers_lt set hmackey='%s' where name='%s' and realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,key,usname,realm);
 			res = PQexec(pqc, statement);
 			if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error inserting/updating user information: %s\n",PQerrorMessage(pqc));
@@ -278,7 +278,8 @@ static int pgsql_set_oauth_key(oauth_key_data_raw *key) {
   char statement[TURN_LONG_STRING_SIZE];
   PGconn *pqc = get_pqdb_connection();
   if(pqc) {
-	  snprintf(statement,sizeof(statement),"insert into oauth_key (kid,ikm_key,timestamp,lifetime,as_rs_alg,realm) values('%s','%s',%llu,%lu,'%s','%s')",
+	  snprintf(statement,sizeof(statement),"insert into %soauth_key (kid,ikm_key,timestamp,lifetime,as_rs_alg,realm) values('%s','%s',%llu,%lu,'%s','%s')",
+			  turn_params.default_users_db.persistent_users_db.table_prefix,
 			  key->kid,key->ikm_key,(unsigned long long)key->timestamp,(unsigned long)key->lifetime,
 			  key->as_rs_alg,key->realm);
 
@@ -287,7 +288,7 @@ static int pgsql_set_oauth_key(oauth_key_data_raw *key) {
 		  if(res) {
 			PQclear(res);
 		  }
-		  snprintf(statement,sizeof(statement),"update oauth_key set ikm_key='%s',timestamp=%lu,lifetime=%lu, as_rs_alg='%s', realm='%s' where kid='%s'",key->ikm_key,(unsigned long)key->timestamp,(unsigned long)key->lifetime,
+		  snprintf(statement,sizeof(statement),"update %soauth_key set ikm_key='%s',timestamp=%lu,lifetime=%lu, as_rs_alg='%s', realm='%s' where kid='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,key->ikm_key,(unsigned long)key->timestamp,(unsigned long)key->lifetime,
 				  key->as_rs_alg,key->realm,key->kid);
 		  res = PQexec(pqc, statement);
 		  if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
@@ -311,7 +312,7 @@ static int pgsql_del_user(uint8_t *usname, uint8_t *realm) {
 	char statement[TURN_LONG_STRING_SIZE];
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-		snprintf(statement,sizeof(statement),"delete from turnusers_lt where name='%s' and realm='%s'",usname,realm);
+		snprintf(statement,sizeof(statement),"delete from %sturnusers_lt where name='%s' and realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,usname,realm);
 		PGresult *res = PQexec(pqc, statement);
 		if(res) {
 			PQclear(res);
@@ -327,7 +328,7 @@ static int pgsql_del_oauth_key(const uint8_t *kid) {
   char statement[TURN_LONG_STRING_SIZE];
   PGconn *pqc = get_pqdb_connection();
   if(pqc) {
-	  snprintf(statement,sizeof(statement),"delete from oauth_key where kid = '%s'",(const char*)kid);
+	  snprintf(statement,sizeof(statement),"delete from %soauth_key where kid = '%s'",turn_params.default_users_db.persistent_users_db.table_prefix,(const char*)kid);
 
 	  PGresult *res = PQexec(pqc, statement);
 	  if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
@@ -353,9 +354,9 @@ static int pgsql_list_users(uint8_t *realm, secrets_list_t *users, secrets_list_
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
 		if(realm[0]) {
-		  snprintf(statement,sizeof(statement),"select name,realm from turnusers_lt where realm='%s' order by name",realm);
+		  snprintf(statement,sizeof(statement),"select name,realm from %sturnusers_lt where realm='%s' order by name",turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 		} else {
-		  snprintf(statement,sizeof(statement),"select name,realm from turnusers_lt order by realm,name");
+		  snprintf(statement,sizeof(statement),"select name,realm from %sturnusers_lt order by realm,name",turn_params.default_users_db.persistent_users_db.table_prefix);
 		}
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -400,9 +401,9 @@ static int pgsql_list_secrets(uint8_t *realm, secrets_list_t *secrets, secrets_l
 
 	char statement[TURN_LONG_STRING_SIZE];
 	if (realm[0]) {
-		snprintf(statement, sizeof(statement), "select value,realm from turn_secret where realm='%s' order by value", realm);
+		snprintf(statement, sizeof(statement), "select value,realm from %sturn_secret where realm='%s' order by value", turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 	} else {
-		snprintf(statement, sizeof(statement), "select value,realm from turn_secret order by realm,value");
+		snprintf(statement, sizeof(statement), "select value,realm from %sturn_secret order by realm,value", turn_params.default_users_db.persistent_users_db.table_prefix);
 	}
 
 	donot_print_connection_success=1;
@@ -448,9 +449,9 @@ static int pgsql_del_secret(uint8_t *secret, uint8_t *realm) {
 	PGconn *pqc = get_pqdb_connection();
 	if (pqc) {
 		if(!secret || (secret[0]==0))
-		  snprintf(statement,sizeof(statement),"delete from turn_secret where realm='%s'",realm);
+		  snprintf(statement,sizeof(statement),"delete from %sturn_secret where realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 		else
-		  snprintf(statement,sizeof(statement),"delete from turn_secret where value='%s' and realm='%s'",secret,realm);
+		  snprintf(statement,sizeof(statement),"delete from %sturn_secret where value='%s' and realm='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,secret,realm);
 
 		PGresult *res = PQexec(pqc, statement);
 		if (res) {
@@ -467,7 +468,7 @@ static int pgsql_set_secret(uint8_t *secret, uint8_t *realm) {
 	char statement[TURN_LONG_STRING_SIZE];
 	PGconn *pqc = get_pqdb_connection();
 	if (pqc) {
-	  snprintf(statement,sizeof(statement),"insert into turn_secret (realm,value) values('%s','%s')",realm,secret);
+	  snprintf(statement,sizeof(statement),"insert into %sturn_secret (realm,value) values('%s','%s')",turn_params.default_users_db.persistent_users_db.table_prefix,realm,secret);
 	  PGresult *res = PQexec(pqc, statement);
 	  if (!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 		  TURN_LOG_FUNC(
@@ -501,9 +502,9 @@ static int pgsql_set_permission_ip(const char *kind, uint8_t *realm, const char*
 	if (pqc) {
 
 		if(del) {
-			snprintf(statement, sizeof(statement), "delete from %s_peer_ip where realm = '%s'  and ip_range = '%s'", kind, (char*)realm, ip);
+			snprintf(statement, sizeof(statement), "delete from %s%s_peer_ip where realm = '%s'  and ip_range = '%s'", turn_params.default_users_db.persistent_users_db.table_prefix, kind, (char*)realm, ip);
 		} else {
-			snprintf(statement, sizeof(statement), "insert into %s_peer_ip (realm,ip_range) values('%s','%s')", kind, (char*)realm, ip);
+			snprintf(statement, sizeof(statement), "insert into %s%s_peer_ip (realm,ip_range) values('%s','%s')", turn_params.default_users_db.persistent_users_db.table_prefix,kind, (char*)realm, ip);
 		}
 
 		PGresult *res = PQexec(pqc, statement);
@@ -528,7 +529,7 @@ static int pgsql_add_origin(uint8_t *origin, uint8_t *realm) {
 	char statement[TURN_LONG_STRING_SIZE];
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-		snprintf(statement,sizeof(statement),"insert into turn_origin_to_realm (origin,realm) values('%s','%s')",origin,realm);
+		snprintf(statement,sizeof(statement),"insert into %sturn_origin_to_realm (origin,realm) values('%s','%s')",turn_params.default_users_db.persistent_users_db.table_prefix,origin,realm);
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error inserting origin information: %s\n",PQerrorMessage(pqc));
@@ -547,7 +548,7 @@ static int pgsql_del_origin(uint8_t *origin) {
 	char statement[TURN_LONG_STRING_SIZE];
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-		snprintf(statement,sizeof(statement),"delete from turn_origin_to_realm where origin='%s'",origin);
+		snprintf(statement,sizeof(statement),"delete from %sturn_origin_to_realm where origin='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,origin);
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error deleting origin information: %s\n",PQerrorMessage(pqc));
@@ -577,9 +578,9 @@ static int pgsql_list_origins(uint8_t *realm, secrets_list_t *origins, secrets_l
 		char statement[TURN_LONG_STRING_SIZE];
 
 		if(realm && realm[0]) {
-		  snprintf(statement,sizeof(statement),"select origin,realm from turn_origin_to_realm where realm='%s' order by origin",realm);
+		  snprintf(statement,sizeof(statement),"select origin,realm from %sturn_origin_to_realm where realm='%s' order by origin",turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 		} else {
-		  snprintf(statement,sizeof(statement),"select origin,realm from turn_origin_to_realm order by realm,origin");
+		  snprintf(statement,sizeof(statement),"select origin,realm from %sturn_origin_to_realm order by realm,origin",turn_params.default_users_db.persistent_users_db.table_prefix);
 		}
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -621,14 +622,14 @@ static int pgsql_set_realm_option_one(uint8_t *realm, unsigned long value, const
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
 		{
-			snprintf(statement,sizeof(statement),"delete from turn_realm_option where realm='%s' and opt='%s'",realm,opt);
+			snprintf(statement,sizeof(statement),"delete from %sturn_realm_option where realm='%s' and opt='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,realm,opt);
 			PGresult *res = PQexec(pqc, statement);
 			if(res) {
 				PQclear(res);
 			}
 		}
 		if(value>0) {
-			snprintf(statement,sizeof(statement),"insert into turn_realm_option (realm,opt,value) values('%s','%s','%lu')",realm,opt,(unsigned long)value);
+			snprintf(statement,sizeof(statement),"insert into %sturn_realm_option (realm,opt,value) values('%s','%s','%lu')",turn_params.default_users_db.persistent_users_db.table_prefix,realm,opt,(unsigned long)value);
 			PGresult *res = PQexec(pqc, statement);
 			if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error inserting realm option information: %s\n",PQerrorMessage(pqc));
@@ -650,9 +651,9 @@ static int pgsql_list_realm_options(uint8_t *realm) {
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
 		if(realm && realm[0]) {
-			snprintf(statement,sizeof(statement),"select realm,opt,value from turn_realm_option where realm='%s' order by realm,opt",realm);
+			snprintf(statement,sizeof(statement),"select realm,opt,value from %sturn_realm_option where realm='%s' order by realm,opt",turn_params.default_users_db.persistent_users_db.table_prefix,realm);
 		} else {
-			snprintf(statement,sizeof(statement),"select realm,opt,value from turn_realm_option order by realm,opt");
+			snprintf(statement,sizeof(statement),"select realm,opt,value from %sturn_realm_option order by realm,opt",turn_params.default_users_db.persistent_users_db.table_prefix);
 		}
 		PGresult *res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -685,7 +686,7 @@ static void pgsql_auth_ping(void * rch) {
 	PGconn * pqc = get_pqdb_connection();
 	if(pqc) {
 		char statement[TURN_LONG_STRING_SIZE];
-		STRCPY(statement,"select value from turn_secret");
+		snprintf(statement, sizeof(statement), "select value from %sturn_secret", turn_params.default_users_db.persistent_users_db.table_prefix);
 		PGresult *res = PQexec(pqc, statement);
 
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -705,7 +706,7 @@ static int pgsql_get_ip_list(const char *kind, ip_range_list_t * list)
 	PGconn * pqc = get_pqdb_connection();
 	if (pqc) {
 		char statement[TURN_LONG_STRING_SIZE];
-		snprintf(statement, sizeof(statement), "select ip_range,realm from %s_peer_ip", kind);
+		snprintf(statement, sizeof(statement), "select ip_range,realm from %s%s_peer_ip", turn_params.default_users_db.persistent_users_db.table_prefix,kind);
 		PGresult *res = PQexec(pqc, statement);
 
 		if (!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {
@@ -714,7 +715,7 @@ static int pgsql_get_ip_list(const char *kind, ip_range_list_t * list)
 				wrong_table_reported = 1;
 				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error retrieving PostgreSQL DB information: %s; probably, the tables 'allowed_peer_ip' and/or 'denied_peer_ip' have to be upgraded to include the realm column.\n",PQerrorMessage(pqc));
 			}
-			snprintf(statement, sizeof(statement), "select ip_range,'' from %s_peer_ip", kind);
+			snprintf(statement, sizeof(statement), "select ip_range,'' from %s%s_peer_ip", turn_params.default_users_db.persistent_users_db.table_prefix,kind);
 			res = PQexec(pqc, statement);
 		}
 
@@ -743,7 +744,7 @@ static void pgsql_reread_realms(secrets_list_t * realms_list) {
 		char statement[TURN_LONG_STRING_SIZE];
 
 		{
-			snprintf(statement,sizeof(statement),"select origin,realm from turn_origin_to_realm");
+			snprintf(statement,sizeof(statement),"select origin,realm from %sturn_origin_to_realm",turn_params.default_users_db.persistent_users_db.table_prefix);
 			PGresult *res = PQexec(pqc, statement);
 
 			if(res && (PQresultStatus(res) == PGRES_TUPLES_OK)) {
@@ -801,7 +802,7 @@ static void pgsql_reread_realms(secrets_list_t * realms_list) {
 				}
 			}
 
-			snprintf(statement,sizeof(statement),"select realm,opt,value from turn_realm_option");
+			snprintf(statement,sizeof(statement),"select realm,opt,value from %sturn_realm_option",turn_params.default_users_db.persistent_users_db.table_prefix);
 			PGresult *res = PQexec(pqc, statement);
 
 			if(res && (PQresultStatus(res) == PGRES_TUPLES_OK)) {
@@ -845,7 +846,7 @@ static int pgsql_get_admin_user(const uint8_t *usname, uint8_t *realm, password_
 	PGconn * pqc = get_pqdb_connection();
 	if(pqc) {
 		char statement[TURN_LONG_STRING_SIZE];
-		snprintf(statement,sizeof(statement),"select realm,password from admin_user where name='%s'",usname);
+		snprintf(statement,sizeof(statement),"select realm,password from %sadmin_user where name='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,usname);
 		PGresult *res = PQexec(pqc, statement);
 
 		if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK) || (PQntuples(res)!=1)) {
@@ -876,14 +877,14 @@ static int pgsql_set_admin_user(const uint8_t *usname, const uint8_t *realm, con
 	donot_print_connection_success=1;
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-	  snprintf(statement,sizeof(statement),"insert into admin_user (realm,name,password) values('%s','%s','%s')",realm,usname,pwd);
+	  snprintf(statement,sizeof(statement),"insert into %sadmin_user (realm,name,password) values('%s','%s','%s')",turn_params.default_users_db.persistent_users_db.table_prefix,realm,usname,pwd);
 
 	  PGresult *res = PQexec(pqc, statement);
 	  if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 		if(res) {
 			PQclear(res);
 		}
-		snprintf(statement,sizeof(statement),"update admin_user set password='%s',realm='%s' where name='%s'",pwd,realm,usname);
+		snprintf(statement,sizeof(statement),"update %sadmin_user set password='%s',realm='%s' where name='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,pwd,realm,usname);
 		res = PQexec(pqc, statement);
 		if(!res || (PQresultStatus(res) != PGRES_COMMAND_OK)) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error inserting/updating user information: %s\n",PQerrorMessage(pqc));
@@ -905,7 +906,7 @@ static int pgsql_del_admin_user(const uint8_t *usname)
 	donot_print_connection_success=1;
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-		snprintf(statement,sizeof(statement),"delete from admin_user where name='%s'",usname);
+		snprintf(statement,sizeof(statement),"delete from %sadmin_user where name='%s'",turn_params.default_users_db.persistent_users_db.table_prefix,usname);
 		PGresult *res = PQexec(pqc, statement);
 		if(res) {
 			PQclear(res);
@@ -922,7 +923,7 @@ static int pgsql_list_admin_users(int no_print)
 	donot_print_connection_success=1;
 	PGconn *pqc = get_pqdb_connection();
 	if(pqc) {
-		snprintf(statement,sizeof(statement),"select name,realm,password from admin_user order by realm,name");
+		snprintf(statement,sizeof(statement),"select name,realm,password from %sadmin_user order by realm,name",turn_params.default_users_db.persistent_users_db.table_prefix);
 	}
 	PGresult *res = PQexec(pqc, statement);
 	if(!res || (PQresultStatus(res) != PGRES_TUPLES_OK)) {

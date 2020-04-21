@@ -151,7 +151,7 @@ TURN_CREDENTIALS_NONE, /* ct */
 0, /* total_quota */
 0, /* user_quota */
 ///////////// Users DB //////////////
-{ (TURN_USERDB_TYPE)0, {"\0"}, {0,NULL, {NULL,0}} },
+{ (TURN_USERDB_TYPE)0, {"\0","public"}, {0,NULL, {NULL,0}} },
 ///////////// CPUs //////////////////
 DEFAULT_CPUS_NUMBER,
 ///////// Encryption /////////
@@ -486,6 +486,7 @@ static char Usage[] = "Usage: turnserver [options]\n"
 " -e, --psql-userdb, --sql-userdb <conn-string>	PostgreSQL database connection string, if used (default - empty, no PostreSQL DB used).\n"
 "		                                This database can be used for long-term credentials mechanism users,\n"
 "		                                and it can store the secret value(s) for secret-based timed authentication in TURN REST API.\n"
+" --psql-schema <schema>				PostgreSQL database schema (default - public).\n"
 "						See http://www.postgresql.org/docs/8.4/static/libpq-connect.html for 8.x PostgreSQL\n"
 "						versions format, see \n"
 "						http://www.postgresql.org/docs/9.2/static/libpq-connect.html#LIBPQ-CONNSTRING\n"
@@ -685,6 +686,7 @@ static char AdminUsage[] = "Usage: turnadmin [command] [options]\n"
 #endif
 #if !defined(TURN_NO_PQ)
 	"	-e, --psql-userdb, --sql-userdb	PostgreSQL user database connection string, if PostgreSQL DB is used.\n"
+	"	    --psql-schema 		PostgreSQL database schema.\n"
 #endif
 #if !defined(TURN_NO_MYSQL)
 	"	-M, --mysql-userdb		MySQL user database connection string, if MySQL DB is used.\n"
@@ -790,7 +792,8 @@ enum EXTRA_OPTS {
 	OAUTH_OPT,
 	PROD_OPT,
 	NO_HTTP_OPT,
-	SECRET_KEY_OPT
+	SECRET_KEY_OPT,
+	PSQL_SCHEMA_OPT
 };
 
 struct myoption {
@@ -829,6 +832,7 @@ static const struct myoption long_options[] = {
 #if !defined(TURN_NO_PQ)
 				{ "psql-userdb", required_argument, NULL, 'e' },
 				{ "sql-userdb", required_argument, NULL, 'e' },
+				{ "psql-schema", required_argument, NULL, PSQL_SCHEMA_OPT },
 #endif
 #if !defined(TURN_NO_MYSQL)
 				{ "mysql-userdb", required_argument, NULL, 'M' },
@@ -941,6 +945,7 @@ static const struct myoption admin_long_options[] = {
 #if !defined(TURN_NO_PQ)
 				{ "psql-userdb", required_argument, NULL, 'e' },
 				{ "sql-userdb", required_argument, NULL, 'e' },
+				{ "psql-schema", required_argument, NULL, PSQL_SCHEMA_OPT },
 #endif
 #if !defined(TURN_NO_MYSQL)
 				{ "mysql-userdb", required_argument, NULL, 'M' },
@@ -1412,6 +1417,9 @@ static void set_option(int c, char *value)
 		STRCPY(turn_params.default_users_db.persistent_users_db.userdb, value);
 		turn_params.default_users_db.userdb_type = TURN_USERDB_TYPE_PQ;
 		break;
+	case PSQL_SCHEMA_OPT:
+		snprintf(turn_params.default_users_db.persistent_users_db.table_prefix, sizeof(turn_params.default_users_db.persistent_users_db.table_prefix) - 1, "\"%s\".", value);
+		break;
 #endif
 #if !defined(TURN_NO_MYSQL)
 	case 'M':
@@ -1835,6 +1843,9 @@ static int adminmain(int argc, char **argv)
 		case 'e':
 		  STRCPY(turn_params.default_users_db.persistent_users_db.userdb,optarg);
 		  turn_params.default_users_db.userdb_type = TURN_USERDB_TYPE_PQ;
+		  break;
+		case PSQL_SCHEMA_OPT:
+		  snprintf(turn_params.default_users_db.persistent_users_db.table_prefix, sizeof(turn_params.default_users_db.persistent_users_db.table_prefix) - 1, "\"%s\".", optarg);
 		  break;
 #endif
 #if !defined(TURN_NO_MYSQL)
