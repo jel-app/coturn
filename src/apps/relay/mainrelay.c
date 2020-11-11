@@ -31,6 +31,11 @@
 #include "mainrelay.h"
 #include "dbdrivers/dbdriver.h"
 
+#if !defined(TURN_NO_PROMETHEUS)
+#include "prom_server.h"
+#endif
+
+
 #if (defined LIBRESSL_VERSION_NUMBER && OPENSSL_VERSION_NUMBER == 0x20000000L)
 #undef OPENSSL_VERSION_NUMBER
 #define OPENSSL_VERSION_NUMBER 0x1000107FL
@@ -90,7 +95,7 @@ NULL,
 NULL,
 #endif
 
-DH_1066, "", "", "",
+DH_2066, "", "", "",
 "turn_server_cert.pem","turn_server_pkey.pem", "", "",
 0,0,0,
 #if !TLS_SUPPORTED
@@ -110,8 +115,8 @@ NULL, PTHREAD_MUTEX_INITIALIZER,
 //////////////// Common params ////////////////////
 TURN_VERBOSE_NONE,0,0,0,0,
 "/var/run/turnserver.pid",
-DEFAULT_STUN_PORT,DEFAULT_STUN_TLS_PORT,0,0,1,
-0,0,0,0,
+DEFAULT_STUN_PORT,DEFAULT_STUN_TLS_PORT,0,0,0,1,
+0,0,0,0,0,
 "",
 "",0,
 {
@@ -150,6 +155,9 @@ TURN_CREDENTIALS_NONE, /* ct */
 0, /* bps_capacity_allocated */
 0, /* total_quota */
 0, /* user_quota */
+#if !defined(TURN_NO_PROMETHEUS)
+0, /* prometheus disabled by default */
+#endif
 ///////////// Users DB //////////////
 { (TURN_USERDB_TYPE)0, {"\0","public"}, {0,NULL, {NULL,0}} },
 ///////////// CPUs //////////////////
@@ -405,6 +413,8 @@ static char Usage[] = "Usage: turnserver [options]\n"
 "                                                or in old RFC 3489 sense, default is \"listening port plus one\").\n"
 " --alt-tls-listening-port	<port>		Alternative listening port for TLS and DTLS,\n"
 " 						the default is \"TLS/DTLS port plus one\".\n"
+" --tcp-proxy-port		<port>		Support connections from TCP loadbalancer on this port. The loadbalancer should\n"
+"						use the binary proxy protocol (https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt)\n"
 " -L, --listening-ip		<ip>		Listener IP address of relay server. Multiple listeners can be specified.\n"
 " --aux-server			<ip:port>	Auxiliary STUN/TURN server listening endpoint.\n"
 "						Auxiliary servers do not have alternative ports and\n"
@@ -451,7 +461,7 @@ static char Usage[] = "Usage: turnserver [options]\n"
 " -v, --verbose					'Moderate' verbose mode.\n"
 " -V, --Verbose					Extra verbose mode, very annoying (for debug purposes only).\n"
 " -o, --daemon					Start process as daemon (detach from current shell).\n"
-" --prod       	 				Production mode: hide the software version.\n"
+" --no-software-attribute	 		Production mode: hide the software version (formerly --prod).\n"
 " -f, --fingerprint				Use fingerprints in the TURN messages.\n"
 " -a, --lt-cred-mech				Use the long-term credential mechanism.\n"
 " -z, --no-auth					Do not use any credential mechanism, allow anonymous access.\n"
@@ -527,6 +537,10 @@ static char Usage[] = "Usage: turnserver [options]\n"
 "		                                and delivering traffic and allocation event notifications.\n"
 "						The connection string has the same parameters as redis-userdb connection string.\n"
 #endif
+#if !defined(TURN_NO_PROMETHEUS)
+" --prometheus					Enable prometheus metrics. It is disabled by default. If it is enabled it will listen on port 9641 unther the path /metrics\n"
+"						also the path / on this port can be used as a health check\n"
+#endif
 " --use-auth-secret				TURN REST API flag.\n"
 "						Flag that sets a special authorization option that is based upon authentication secret\n"
 "						(TURN Server REST API, see TURNServerRESTAPI.pdf). This option is used with timestamp.\n"
@@ -562,10 +576,10 @@ static char Usage[] = "Usage: turnserver [options]\n"
 "						if pre-OpenSSL 1.0.2 is used. With OpenSSL 1.0.2+,\n"
 "						an optimal curve will be automatically calculated, if not defined\n"
 "						by this option.\n"
-" --dh566					Use 566 bits predefined DH TLS key. Default size of the predefined key is 1066.\n"
-" --dh2066					Use 2066 bits predefined DH TLS key. Default size of the predefined key is 1066.\n"
+" --dh566					Use 566 bits predefined DH TLS key. Default size of the predefined key is 2066.\n"
+" --dh1066					Use 1066 bits predefined DH TLS key. Default size of the predefined key is 2066.\n"
 " --dh-file	<dh-file-name>			Use custom DH TLS key, stored in PEM format in the file.\n"
-"						Flags --dh566 and --dh2066 are ignored when the DH key is taken from a file.\n"
+"						Flags --dh566 and --dh1066 are ignored when the DH key is taken from a file.\n"
 " --no-tlsv1					Do not allow TLSv1/DTLSv1 protocol.\n"
 " --no-tlsv1_1					Do not allow TLSv1.1 protocol.\n"
 " --no-tlsv1_2					Do not allow TLSv1.2/DTLSv1.2 protocol.\n"
@@ -721,6 +735,7 @@ static char AdminUsage[] = "Usage: turnadmin [command] [options]\n"
 enum EXTRA_OPTS {
 	NO_UDP_OPT=256,
 	NO_TCP_OPT,
+	TCP_PROXY_PORT_OPT,
 	NO_TLS_OPT,
 	NO_DTLS_OPT,
 	NO_UDP_RELAY_OPT,
@@ -737,6 +752,7 @@ enum EXTRA_OPTS {
 	MAX_ALLOCATE_LIFETIME_OPT,
 	CHANNEL_LIFETIME_OPT,
 	PERMISSION_LIFETIME_OPT,
+	PROMETHEUS_OPT,
 	AUTH_SECRET_OPT,
 	NO_AUTH_PINGS_OPT,
 	NO_DYNAMIC_IP_LIST_OPT,
@@ -777,7 +793,7 @@ enum EXTRA_OPTS {
 	CLI_MAX_SESSIONS_OPT,
 	EC_CURVE_NAME_OPT,
 	DH566_OPT,
-	DH2066_OPT,
+	DH1066_OPT,
 	NE_TYPE_OPT,
 	NO_SSLV2_OPT, /*deprecated*/
 	NO_SSLV3_OPT, /*deprecated*/
@@ -790,7 +806,7 @@ enum EXTRA_OPTS {
 	ADMIN_USER_QUOTA_OPT,
 	SERVER_NAME_OPT,
 	OAUTH_OPT,
-	PROD_OPT,
+	NO_SOFTWARE_ATTRIBUTE_OPT,
 	NO_HTTP_OPT,
 	SECRET_KEY_OPT,
 	PSQL_SCHEMA_OPT
@@ -817,6 +833,7 @@ static const struct myoption long_options[] = {
 				{ "tls-listening-port", required_argument, NULL, TLS_PORT_OPT },
 				{ "alt-listening-port", required_argument, NULL, ALT_PORT_OPT },
 				{ "alt-tls-listening-port", required_argument, NULL, ALT_TLS_PORT_OPT },
+				{ "tcp-proxy-port", required_argument, NULL, TCP_PROXY_PORT_OPT },
 				{ "listening-ip", required_argument, NULL, 'L' },
 				{ "relay-device", required_argument, NULL, 'i' },
 				{ "relay-ip", required_argument, NULL, 'E' },
@@ -844,6 +861,9 @@ static const struct myoption long_options[] = {
 				{ "redis-userdb", required_argument, NULL, 'N' },
 				{ "redis-statsdb", required_argument, NULL, 'O' },
 #endif
+#if !defined(TURN_NO_PROMETHEUS)
+				{ "prometheus", optional_argument, NULL, PROMETHEUS_OPT },
+#endif
 				{ "use-auth-secret", optional_argument, NULL, AUTH_SECRET_OPT },
 				{ "static-auth-secret", required_argument, NULL, STATIC_AUTH_SECRET_VAL_OPT },
 				{ "no-auth-pings", optional_argument, NULL, NO_AUTH_PINGS_OPT },
@@ -860,7 +880,8 @@ static const struct myoption long_options[] = {
 				{ "verbose", optional_argument, NULL, 'v' },
 				{ "Verbose", optional_argument, NULL, 'V' },
 				{ "daemon", optional_argument, NULL, 'o' },
-				{ "prod", optional_argument, NULL, PROD_OPT },
+/* deprecated: */		{ "prod", optional_argument, NULL, NO_SOFTWARE_ATTRIBUTE_OPT },
+				{ "no-software-attribute", optional_argument, NULL, NO_SOFTWARE_ATTRIBUTE_OPT },
 				{ "fingerprint", optional_argument, NULL, 'f' },
 				{ "check-origin-consistency", optional_argument, NULL, CHECK_ORIGIN_CONSISTENCY_OPT },
 				{ "no-udp", optional_argument, NULL, NO_UDP_OPT },
@@ -912,7 +933,7 @@ static const struct myoption long_options[] = {
 				{ "cli-max-output-sessions", required_argument, NULL, CLI_MAX_SESSIONS_OPT },
 				{ "ec-curve-name", required_argument, NULL, EC_CURVE_NAME_OPT },
 				{ "dh566", optional_argument, NULL, DH566_OPT },
-				{ "dh2066", optional_argument, NULL, DH2066_OPT },
+				{ "dh1066", optional_argument, NULL, DH1066_OPT },
 				{ "ne", required_argument, NULL, NE_TYPE_OPT },
 				{ "no-sslv2", optional_argument, NULL, NO_SSLV2_OPT }, /* deprecated */
 				{ "no-sslv3", optional_argument, NULL, NO_SSLV3_OPT }, /* deprecated */
@@ -1179,9 +1200,9 @@ static void set_option(int c, char *value)
 	  if(get_bool_value(value))
 		  turn_params.dh_key_size = DH_566;
 	  break;
-  case DH2066_OPT:
+  case DH1066_OPT:
 	  if(get_bool_value(value))
-		  turn_params.dh_key_size = DH_2066;
+		  turn_params.dh_key_size = DH_1066;
 	  break;
   case EC_CURVE_NAME_OPT:
 	  STRCPY(turn_params.ec_curve_name,value);
@@ -1282,6 +1303,10 @@ static void set_option(int c, char *value)
 		break;
 	case ALT_TLS_PORT_OPT:
 		turn_params.alt_tls_listener_port = atoi(value);
+		break;
+	case TCP_PROXY_PORT_OPT:
+		turn_params.tcp_proxy_port = atoi(value);
+		turn_params.tcp_use_proxy = 1;
 		break;
 	case MIN_PORT_OPT:
 		turn_params.min_port = atoi(value);
@@ -1395,8 +1420,8 @@ static void set_option(int c, char *value)
 			anon_credentials = 1;
 		}
 		break;
-	case PROD_OPT:
-		turn_params.prod = get_bool_value(value);
+	case NO_SOFTWARE_ATTRIBUTE_OPT:
+		turn_params.no_software_attribute = get_bool_value(value);
 		break;
 	case 'f':
 		turn_params.fingerprint = get_bool_value(value);
@@ -1441,6 +1466,11 @@ static void set_option(int c, char *value)
 	case 'O':
 		STRCPY(turn_params.redis_statsdb, value);
 		turn_params.use_redis_statsdb = 1;
+		break;
+#endif
+#if !defined(TURN_NO_PROMETHEUS)
+	case PROMETHEUS_OPT:
+		turn_params.prometheus = 1;
 		break;
 #endif
 	case AUTH_SECRET_OPT:
@@ -2093,6 +2123,7 @@ static void set_network_engine(void)
 
 static void drop_privileges(void)
 {
+	setgroups(0, NULL);
 	if(procgroupid_set) {
 		if(getgid() != procgroupid) {
 			if (setgid(procgroupid) != 0) {
@@ -2298,13 +2329,13 @@ int main(int argc, char **argv)
 
 	if(turn_params.allow_loopback_peers) {
 		TURN_LOG_FUNC(TURN_LOG_LEVEL_WARNING, "CONFIG WARNING: allow_loopback_peers opens a possible security vulnerability. Do not use in production!!\n");
-		if(cli_password[0]==0) {
+		if(cli_password[0]==0 && use_cli) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nCONFIG ERROR: allow_loopback_peers and empty cli password cannot be used together.\n");
 			exit(-1);
 		}
         }
 
-	if(use_cli && cli_password[0]==0) {
+	if(use_cli && cli_password[0]==0 && use_cli) {
 		TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nCONFIG ERROR: Empty cli-password, and so telnet cli interface is disabled! Please set a non empty cli-password!\n");
 		use_cli = 0;
 	}
@@ -2464,6 +2495,15 @@ int main(int argc, char **argv)
 	event_add(ev, NULL);
 
 	drop_privileges();
+#if !defined(TURN_NO_PROMETHEUS)
+	if (start_prometheus_server()){
+	  TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nCould not start Prometheus collector!\n");
+	}
+	else {
+	  TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "\nPrometheus collector started sucessfully.\n");
+	}
+#endif
+
 
 	run_listener_server(&(turn_params.listener));
 
@@ -2931,10 +2971,10 @@ static void set_ctx(SSL_CTX** out, const char *protocol, const SSL_METHOD* metho
 		if(!dh) {
 			if(turn_params.dh_key_size == DH_566)
 				dh = get_dh566();
-			else if(turn_params.dh_key_size == DH_2066)
-				dh = get_dh2066();
-			else
+			else if(turn_params.dh_key_size == DH_1066)
 				dh = get_dh1066();
+			else
+				dh = get_dh2066();
 		}
 
 		/*
